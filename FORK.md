@@ -48,7 +48,7 @@ All fork logic lives in **fork-owned files**, marked so merges stay trivial:
 | `FORK.md`                               | fork-only                | this file                                                                                                                             |
 | `src/index.ts`                          | **edited upstream file** | 4 small hunks, each tagged `FORK(lite)` — import, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, startup log lines |
 | `README.md`                             | **edited upstream file** | fork banner at the top + a "Using this fork" section (install, differences), a `TINYFISH_TOOLS` env row, small fork notes elsewhere  |
-| `package.json`                          | **edited upstream file** | two additions: `"prepare": "npm run build"` (so git installs build `dist/`) and an `allowScripts` object (`@tiny-fish/mcp`, `esbuild`, `fsevents`) so npm ≥ 11.17 script-policy installs authorize them |
+| `package.json`                          | **edited upstream file** | renamed to `tinyfish-mcp-lite` (published on npm; repository/homepage/bugs/mcpName point at the fork), `"prepare": "npm run build"` + an `allowScripts` object for npm ≥ 11.17 script-policy installs, bin target without the `./` prefix (npm ≥ 11.17 publish normalization drops `bin` otherwise) |
 | `.github/workflows/ci.yml`              | **edited upstream file** | integration leg scoped to the fork's free-tool suite (`FORK(lite)` note on the step) — upstream's suite runs a real paid automation |
 
 Every hunk that touches an upstream file carries a `FORK(lite)` comment (code)
@@ -103,6 +103,23 @@ git push
 (The full `npm run test:integration` also works, but includes upstream's
 `proxy.integration.test.ts`, which executes a real paid automation and spends
 credits.)
+
+### Releasing to npm
+
+The fork publishes as [`tinyfish-mcp-lite`](https://www.npmjs.com/package/tinyfish-mcp-lite)
+(`publishConfig.registry` points at npmjs). After landing upstream changes
+worth shipping:
+
+```sh
+npm version patch        # or minor / major
+npm publish              # builds dist/ via prepublishOnly; no install-time scripts
+git push --follow-tags
+```
+
+The published package carries no install-time lifecycle scripts, so npm's
+install-script policy (`allow-scripts`) never blocks it. Note for new
+package names: the first publish lands as a `0.0.0-stage` placeholder until
+you confirm the release on npmjs.com — later versions publish directly.
 
 ### Resolving conflicts
 

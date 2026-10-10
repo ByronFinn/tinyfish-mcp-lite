@@ -1,6 +1,6 @@
-# @tiny-fish/mcp
+# tinyfish-mcp-lite
 
-[![npm version](https://img.shields.io/npm/v/@tiny-fish/mcp)](https://www.npmjs.com/package/@tiny-fish/mcp)
+[![npm version](https://img.shields.io/npm/v/tinyfish-mcp-lite)](https://www.npmjs.com/package/tinyfish-mcp-lite)
 
 > **⚠️ You are on `tinyfish-mcp-lite`** — a fork that exposes **only the two
 > free hosted tools** (`search`, `fetch_content`) and hides the 26 paid ones,
@@ -51,13 +51,14 @@ this fork too — with exactly these differences:
 
 ### Install (this fork)
 
-The npm package name below belongs to **upstream** — installing it gets the
-unfiltered server. To use this fork, install it from GitHub (requires
-Node.js >= 22):
+The fork ships on npm as **`tinyfish-mcp-lite`** (requires Node.js >= 22):
 
 ```sh
-# one-liner (the fork's prepare script builds dist/ during install)
-npm install -g github:ByronFinn/tinyfish-mcp-lite
+# run without installing
+TINYFISH_API_KEY=tf_... npx tinyfish-mcp-lite
+
+# or install globally for the `tinyfish-mcp` command
+npm install -g tinyfish-mcp-lite
 TINYFISH_API_KEY=tf_... tinyfish-mcp
 
 # or from a clone
@@ -67,12 +68,12 @@ npm ci && npm run build
 TINYFISH_API_KEY=tf_... node dist/index.js
 ```
 
-> **npm ≥ 11.17 with the install-script policy enabled** (an `allow-scripts`
-> entry in your `~/.npmrc`): git-based installs (`npx github:…`,
-> `npm install -g github:…`) fail with `EALLOWSCRIPTS` — a known npm quirk
-> where the policy reaches the inner git-dep build via the environment. Use
-> the clone route instead, then `npm install -g .` from the clone if you
-> want the `tinyfish-mcp` command on your PATH.
+> **Note on git-based installs** (`npm i -g github:ByronFinn/tinyfish-mcp-lite`):
+> npm ≥ 11.17 with the install-script policy enabled (an `allow-scripts`
+> entry in your `~/.npmrc`) rejects them with `EALLOWSCRIPTS` — the policy
+> leaks into the inner git-dep build via the environment. Use the npm or
+> clone routes instead; registry installs (`npx tinyfish-mcp-lite`) are
+> unaffected.
 
 Then point your MCP client at `http://127.0.0.1:3711/mcp` exactly as
 described in [Client configuration](#client-configuration) below.
