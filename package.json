@@ -22,6 +22,11 @@
   "author": "TinyFish (https://tinyfish.ai)",
   "type": "module",
   "license": "MIT",
+  "allowScripts": {
+    "@tiny-fish/mcp": true,
+    "esbuild": true,
+    "fsevents": true
+  },
   "bin": {
     "tinyfish-mcp": "./dist/index.js"
   },
