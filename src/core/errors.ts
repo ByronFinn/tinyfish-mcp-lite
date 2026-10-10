@@ -234,8 +234,7 @@ export function toStreamErrorFrame(
       jsonrpc: "2.0",
       error: {
         code: JsonRpcErrorCodes.UpstreamUnavailable,
-        message:
-          condition + "the run may still be executing — do not retry blindly." + runHint,
+        message: condition + "the run may still be executing — do not retry blindly." + runHint,
         ...(runId !== undefined ? { data: { runId } } : {}),
       },
       id,

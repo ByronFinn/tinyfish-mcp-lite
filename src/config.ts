@@ -16,9 +16,7 @@ export interface Config {
 export class ConfigError extends Error {}
 
 const envSchema = z.object({
-  TINYFISH_API_KEY: z
-    .string({ error: API_KEY_GUIDANCE })
-    .min(1, { error: API_KEY_GUIDANCE }),
+  TINYFISH_API_KEY: z.string({ error: API_KEY_GUIDANCE }).min(1, { error: API_KEY_GUIDANCE }),
   PORT: z
     .string()
     .optional()

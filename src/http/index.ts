@@ -9,10 +9,7 @@ import { checkOrigin } from "./origin.js";
  * JSON-RPC InternalError response (or just ends the response when headers are
  * already out, e.g. mid-SSE), so async failures are never silently swallowed.
  */
-export type RequestHandler = (
-  req: IncomingMessage,
-  res: ServerResponse
-) => void | Promise<void>;
+export type RequestHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
 /** JSON-RPC InternalError, used for unhandled handler failures. */
 const INTERNAL_ERROR = -32603;
@@ -92,9 +89,7 @@ async function invokeSafely(
   } catch (err) {
     // Core error messages never contain the API key, and the client-facing
     // body is generic regardless — the key cannot leak.
-    log.error(
-      `request failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`
-    );
+    log.error(`request failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     if (!res.headersSent) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(

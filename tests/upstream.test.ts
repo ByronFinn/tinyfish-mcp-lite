@@ -56,7 +56,9 @@ describe("UpstreamClient", () => {
 
   describe("outbound headers", () => {
     it("sends the full header set on every call", async () => {
-      const { fetchFn, calls } = recordingFetch(() => jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 }));
+      const { fetchFn, calls } = recordingFetch(() =>
+        jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 })
+      );
       const client = makeClient(fetchFn, "1.2.3");
 
       await client.post(PING);
@@ -75,20 +77,26 @@ describe("UpstreamClient", () => {
     });
 
     it("defaults X-TF-Client-Version to the package version", async () => {
-      const { fetchFn, calls } = recordingFetch(() => jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 }));
+      const { fetchFn, calls } = recordingFetch(() =>
+        jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 })
+      );
       await makeClient(fetchFn).post(PING);
       expect(calls[0].headers["x-tf-client-version"]).toBe(VERSION);
     });
 
     it("omits Mcp-Session-Id and MCP-Protocol-Version when not provided", async () => {
-      const { fetchFn, calls } = recordingFetch(() => jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 }));
+      const { fetchFn, calls } = recordingFetch(() =>
+        jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 })
+      );
       await makeClient(fetchFn).post(PING);
       expect(calls[0].headers).not.toHaveProperty("mcp-session-id");
       expect(calls[0].headers).not.toHaveProperty("mcp-protocol-version");
     });
 
     it("sends Mcp-Session-Id and MCP-Protocol-Version when provided", async () => {
-      const { fetchFn, calls } = recordingFetch(() => jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 }));
+      const { fetchFn, calls } = recordingFetch(() =>
+        jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 })
+      );
       await makeClient(fetchFn).post(PING, {
         sessionId: "sess-42",
         protocolVersion: "2025-06-18",
@@ -98,7 +106,9 @@ describe("UpstreamClient", () => {
     });
 
     it("serializes the JSON-RPC message as the POST body", async () => {
-      const { fetchFn, calls } = recordingFetch(() => jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 }));
+      const { fetchFn, calls } = recordingFetch(() =>
+        jsonResponse({ jsonrpc: "2.0", result: {}, id: 1 })
+      );
       await makeClient(fetchFn).post(PING);
       expect(JSON.parse(calls[0].body)).toEqual(PING);
     });

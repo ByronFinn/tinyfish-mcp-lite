@@ -36,7 +36,9 @@ interface RecordedCall {
 }
 
 /** Injected fetch recording each call; responses come from a queue of factories. */
-function scriptedFetch(...responders: Array<(call: RecordedCall) => Response | Promise<Response>>): {
+function scriptedFetch(
+  ...responders: Array<(call: RecordedCall) => Response | Promise<Response>>
+): {
   fetchFn: FetchLike;
   calls: RecordedCall[];
 } {
@@ -359,7 +361,11 @@ describe("proxyCore session bridging (injected fetch)", () => {
     const { fetchFn } = scriptedFetch(
       () => initializeResponse("sess-log"),
       // Non-204 answer to a notification triggers the core's only log line.
-      () => jsonResponse({ jsonrpc: "2.0", error: { code: -32000, message: "nope" }, id: -1 }, { status: 401 })
+      () =>
+        jsonResponse(
+          { jsonrpc: "2.0", error: { code: -32000, message: "nope" }, id: -1 },
+          { status: 401 }
+        )
     );
     const core = makeCore(fetchFn);
     await core.initialize("local-1", INITIALIZE_REQUEST);
@@ -550,8 +556,8 @@ describe("proxyCore forwardStream", () => {
     const core = makeCore(fetchFn);
     const events: unknown[] = [];
     const pending = core.forwardStream("local-1", CALL_REQUEST, (m) => {
-        events.push(m);
-      });
+      events.push(m);
+    });
     // Wait until the first frame arrived, then tear the session down.
     await vi.waitFor(() => {
       expect(events).toHaveLength(1);

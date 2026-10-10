@@ -81,9 +81,9 @@ describe("parseConfig", () => {
 
   describe("TINYFISH_UPSTREAM_URL", () => {
     it("rejects a non-URL value", () => {
-      expect(() =>
-        parseConfig({ ...validEnv, TINYFISH_UPSTREAM_URL: "not a url" })
-      ).toThrowError(/must be an absolute URL/);
+      expect(() => parseConfig({ ...validEnv, TINYFISH_UPSTREAM_URL: "not a url" })).toThrowError(
+        /must be an absolute URL/
+      );
     });
 
     it("rejects http for non-loopback hosts", () => {
@@ -101,13 +101,12 @@ describe("parseConfig", () => {
       ).toThrowError(ConfigError);
     });
 
-    it.each([
-      "http://127.0.0.1:9999/mcp",
-      "http://localhost:9999/mcp",
-      "http://localhost/mcp",
-    ])("accepts http loopback URL %s", (url) => {
-      expect(parseConfig({ ...validEnv, TINYFISH_UPSTREAM_URL: url }).upstreamUrl).toBe(url);
-    });
+    it.each(["http://127.0.0.1:9999/mcp", "http://localhost:9999/mcp", "http://localhost/mcp"])(
+      "accepts http loopback URL %s",
+      (url) => {
+        expect(parseConfig({ ...validEnv, TINYFISH_UPSTREAM_URL: url }).upstreamUrl).toBe(url);
+      }
+    );
 
     it("accepts https for any host", () => {
       expect(

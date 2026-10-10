@@ -31,7 +31,12 @@ import {
   toJsonRpcError,
   toStreamErrorFrame,
 } from "../core/errors.js";
-import { requestIdOf, type OnEvent, type ProxyCore, type ProxyResponse } from "../core/proxy-core.js";
+import {
+  requestIdOf,
+  type OnEvent,
+  type ProxyCore,
+  type ProxyResponse,
+} from "../core/proxy-core.js";
 import { log } from "../log.js";
 import type { RequestHandler } from "./index.js";
 

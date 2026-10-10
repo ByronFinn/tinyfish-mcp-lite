@@ -443,9 +443,7 @@ describe("final-frame write failure classifies as LOCAL", () => {
   }
 
   function fakeRequest(body: unknown): IncomingMessage {
-    const req = Readable.from([
-      Buffer.from(JSON.stringify(body)),
-    ]) as unknown as IncomingMessage;
+    const req = Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
     (req as { headers: Record<string, string> }).headers = {
       "mcp-session-id": "gap2-session",
     };
@@ -461,7 +459,10 @@ describe("final-frame write failure classifies as LOCAL", () => {
     try {
       // 3 progress frames succeed; write #4 (the final frame) fails.
       const res = new FinalWriteFailingResponse(3);
-      await handler(fakeRequest(automationCall(30, {}, "tok-30")), res as unknown as ServerResponse);
+      await handler(
+        fakeRequest(automationCall(30, {}, "tok-30")),
+        res as unknown as ServerResponse
+      );
 
       expect(res.writes).toBe(4); // 3 progress + the failed final write
       expect(res.destroyed).toBe(true);

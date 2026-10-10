@@ -226,8 +226,7 @@ export function createProxyCore(options: ProxyCoreOptions): ProxyCore {
       // Unreachable against today's real upstream, which 204s notifications
       // before auth runs — revisit if the API-key branch changes that.
       if (response.kind !== "empty") {
-        const errorCode =
-          response.kind === "json" ? jsonRpcErrorCodeOf(response.body) : undefined;
+        const errorCode = response.kind === "json" ? jsonRpcErrorCodeOf(response.body) : undefined;
         const codeSuffix = errorCode !== undefined ? `, JSON-RPC error ${errorCode}` : "";
         log.warn(
           `notification got unexpected ${response.kind} response ` +

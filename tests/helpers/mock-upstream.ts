@@ -141,7 +141,7 @@ export function buildEchoResult(name: string, args: unknown) {
  */
 export function buildAutomationSseMessages(
   progressToken: string | number | undefined,
-  requestId: JsonRpcId,
+  requestId: JsonRpcId
 ): Record<string, unknown>[] {
   const token = progressToken ?? "unknown";
   const resultJson = { headline: "Mock automation extracted this", items: [1, 2, 3] };
@@ -190,7 +190,9 @@ export function buildAutomationSseMessages(
       result: {
         content: [{ type: "text", text: JSON.stringify(resultJson, null, 2) }],
         isError: false,
-        _meta: { profile_hint: "Mock profile hint: pass use_profile=true to reuse saved sessions." },
+        _meta: {
+          profile_hint: "Mock profile hint: pass use_profile=true to reuse saved sessions.",
+        },
         structuredContent: {
           runId: MOCK_RUN_ID,
           status: "completed",
@@ -250,7 +252,7 @@ function sendJson(
   res: ServerResponse,
   status: number,
   payload: unknown,
-  extraHeaders: Record<string, string> = {},
+  extraHeaders: Record<string, string> = {}
 ): void {
   res.writeHead(status, { "Content-Type": "application/json", ...extraHeaders });
   res.end(JSON.stringify(payload));
@@ -261,7 +263,7 @@ function jsonRpcError(
   code: number,
   message: string,
   id: JsonRpcId,
-  extraHeaders: Record<string, string> = {},
+  extraHeaders: Record<string, string> = {}
 ): void {
   // Hosted-server convention: client-error codes -> HTTP 400, everything else -> 500.
   const isClientError =
@@ -273,7 +275,7 @@ function jsonRpcError(
     res,
     isClientError ? 400 : 500,
     { jsonrpc: "2.0", error: { code, message }, id },
-    extraHeaders,
+    extraHeaders
   );
 }
 
@@ -281,7 +283,7 @@ function jsonRpcSuccess(
   res: ServerResponse,
   result: unknown,
   id: JsonRpcId,
-  sessionHeaders: Record<string, string>,
+  sessionHeaders: Record<string, string>
 ): void {
   sendJson(res, 200, { jsonrpc: "2.0", result, id }, sessionHeaders);
 }
@@ -310,7 +312,7 @@ async function streamAutomation(
   res: ServerResponse,
   scriptedMessages: Record<string, unknown>[],
   entry: MockUpstream["seen"][number],
-  args: Record<string, unknown>,
+  args: Record<string, unknown>
 ): Promise<void> {
   const frameDelayMs = typeof args.frameDelayMs === "number" ? args.frameDelayMs : 15;
   const crashAfterFrames =
@@ -321,7 +323,7 @@ async function streamAutomation(
           const params = message.params as Record<string, unknown> | undefined;
           if (params === undefined || !("_meta" in params)) return message;
           const rest = Object.fromEntries(
-            Object.entries(params).filter(([key]) => key !== "_meta"),
+            Object.entries(params).filter(([key]) => key !== "_meta")
           );
           return { ...message, params: rest };
         })
@@ -437,7 +439,7 @@ export function startMockUpstream(): Promise<MockUpstream> {
         res,
         ErrorCodes.InvalidRequest,
         "Invalid JSON-RPC 2.0 request format",
-        (body.id as JsonRpcId) ?? -1,
+        (body.id as JsonRpcId) ?? -1
       );
       return;
     }
@@ -452,9 +454,7 @@ export function startMockUpstream(): Promise<MockUpstream> {
       jsonRpcError(res, ErrorCodes.InvalidRequest, "Missing required Mcp-Session-Id header", id);
       return;
     }
-    const sessionHeaders: Record<string, string> = sessionId
-      ? { [SESSION_HEADER]: sessionId }
-      : {};
+    const sessionHeaders: Record<string, string> = sessionId ? { [SESSION_HEADER]: sessionId } : {};
     const entry: MockUpstream["seen"][number] = {
       method,
       sessionId,
@@ -495,7 +495,7 @@ export function startMockUpstream(): Promise<MockUpstream> {
           res,
           buildResourceReadResult(typeof params.uri === "string" ? params.uri : "mock://unknown"),
           id,
-          sessionHeaders,
+          sessionHeaders
         );
         return;
       default:

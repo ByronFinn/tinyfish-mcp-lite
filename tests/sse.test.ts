@@ -56,7 +56,7 @@ describe("parseSseStream", () => {
 
   it("handles an event split across chunks mid-line and mid-event", async () => {
     const events = await collect(
-      streamOf('da', 'ta: {"sp', 'lit":tr', "ue}\n", "\ndata: ", '{"next":2}\n\n')
+      streamOf("da", 'ta: {"sp', 'lit":tr', "ue}\n", "\ndata: ", '{"next":2}\n\n')
     );
     expect(events.map((e) => e.message)).toEqual([{ split: true }, { next: 2 }]);
     expect(events[0].rawData).toBe('{"split":true}');
