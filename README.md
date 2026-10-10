@@ -48,25 +48,22 @@ this fork too — with exactly these differences:
   upstream catalog (28 tools, unfiltered). Invalid values abort startup.
 - **A second startup log line** states the active filter, e.g.
   `tinyfish-mcp [info] tool filter: exposing [search, fetch_content] — set TINYFISH_TOOLS=* to expose every upstream tool`.
+- **A stdio transport (`--stdio`)** so a client can spawn it as a plain
+  command and own its lifecycle — the recommended setup; see
+  [Install (this fork)](#install-this-fork). The HTTP server is the shared
+  alternative, and both run the exact same filtered proxy.
 
 ### Install (this fork)
 
 The fork ships on npm as **`tinyfish-mcp-lite`** (requires Node.js >= 22).
-Two transports are available:
+Two transports are available — **stdio is the recommended one** for almost
+every setup.
 
-**stdio — one command, the client manages the process.** Most clients that
-launch MCP servers as commands (Claude Code with a `command` entry, Cursor,
-Zed, many launcher UIs) want this:
-
-```sh
-# the client spawns it; add TINYFISH_API_KEY to the command's environment
-npx -y tinyfish-mcp-lite --stdio
-
-# or with the global install (`npm i -g tinyfish-mcp-lite`):
-tinyfish-mcp --stdio
-```
-
-In a client config that takes a command + env vars, that is:
+**stdio — recommended: one command, the client manages the process.** The
+client spawns the server when a session starts and tears it down when the
+session ends: nothing to start, stop or supervise by hand, no port open on
+your machine, and the API key exists only inside that process's environment.
+Configure it wherever your client takes a command + env vars:
 
 ```json
 {
@@ -76,8 +73,32 @@ In a client config that takes a command + env vars, that is:
 }
 ```
 
-**HTTP — one shared server for several clients.** Start it once (terminal,
-systemd, pm2) and point every client at the same URL:
+The same shape works in Claude Desktop's `claude_desktop_config.json`, in
+Cursor's `.cursor/mcp.json`, and in VS Code's `.vscode/mcp.json` (there under
+`"servers"` with `"type": "stdio"`). On **Windows**, some clients cannot spawn
+`npx` directly — use `cmd /c`:
+
+```json
+{
+  "command": "cmd",
+  "args": ["/c", "npx", "-y", "tinyfish-mcp-lite", "--stdio"],
+  "env": { "TINYFISH_API_KEY": "tf_..." }
+}
+```
+
+For Claude Code, one line sets up the same thing:
+
+```sh
+claude mcp add --env TINYFISH_API_KEY=tf_... tinyfish -- npx -y tinyfish-mcp-lite --stdio
+```
+
+(With the global install (`npm i -g tinyfish-mcp-lite`) you can replace the
+`npx` invocation with just `tinyfish-mcp --stdio`. To pin a version instead of
+following `latest`, write `tinyfish-mcp-lite@<version>` in place of the
+package name.)
+
+**HTTP — alternative: one shared server for several clients.** Start it once
+(terminal, systemd, pm2) and point every client at the same URL:
 
 ```sh
 TINYFISH_API_KEY=tf_... npx tinyfish-mcp-lite          # no --stdio flag
@@ -185,6 +206,12 @@ The key is never logged and never echoed back to clients.
 
 ## Client configuration
 
+> **Using this fork with the recommended stdio setup?** The examples below
+> are for the **HTTP transport only** (the shared-server route) — the stdio
+> configuration in [Install (this fork)](#install-this-fork) is purely
+> client-side and needs no URL. If you run the shared HTTP server, everything
+> below applies unchanged.
+
 Start `tinyfish-mcp` (e.g. in a terminal, or under your process manager of
 choice), then point your client at `http://127.0.0.1:3711/mcp`.
 
@@ -259,7 +286,7 @@ no GET SSE channel and no DELETE session teardown). `GET /healthz` returns
 | Variable | Default | Description |
 |---|---|---|
 | `TINYFISH_API_KEY` | (required) | TinyFish API key, sent upstream as `X-API-Key`. The server refuses to start without it. |
-| `PORT` | `3711` | Local listen port (integer 1-65535). No auto-increment: if the port is busy the server exits with an error. |
+| `PORT` | `3711` | Local listen port (integer 1-65535). No auto-increment: if the port is busy the server exits with an error. (Ignored by the stdio transport — it never listens.) |
 | `TINYFISH_UPSTREAM_URL` | `https://agent.tinyfish.ai/mcp` | Upstream MCP URL. Must be `https:`; `http:` is allowed only for `127.0.0.1`/`localhost` (local testing). |
 | `TINYFISH_TOOLS` | `search,fetch_content` | **Fork only:** comma-separated allowlist of upstream tools to expose; `*` disables filtering and exposes the full upstream catalog. Invalid values abort startup. |
 
@@ -284,6 +311,10 @@ This is a loopback-only server with a deliberate, documented trust boundary:
   your key and drive automations** (which can spend TinyFish credits). The
   loopback bind and Origin check are the mitigations; treat the port as a
   local trust boundary on a machine you trust.
+- **stdio narrows this boundary further.** The stdio transport opens no port
+  at all: the key lives only in the client-spawned process's environment, and
+  its only I/O is the client's own stdin/stdout pipes — other local processes
+  have no handle to reach for.
 
 ## Troubleshooting
 
@@ -311,7 +342,18 @@ the upstream answers its own error; send one JSON-RPC message per request.
 
 **Claude/other client can't connect** — make sure `tinyfish-mcp` is actually
 running (it's a standalone server; clients do not launch it) and that
-`GET http://127.0.0.1:3711/healthz` answers `ok`.
+`GET http://127.0.0.1:3711/healthz` answers `ok`. (On the stdio transport the
+client launches the process itself — see the next entry.)
+
+**stdio client launches but the server never answers** — run the exact
+command from your client config (`npx -y tinyfish-mcp-lite --stdio`) in a
+terminal: it should print the `stdio transport — …` and `tool filter: …`
+lines on stderr and answer JSON-RPC on stdin. A silent spawn failure usually
+means `npx` cannot reach the registry (offline, or a registry mirror that has
+not synced a brand-new release yet — pin the exact version, e.g.
+`tinyfish-mcp-lite@0.2.1`, until it does), or that the client cannot spawn
+`npx` directly on Windows (use the `cmd /c` form from
+[Install (this fork)](#install-this-fork)).
 
 ## Development
 
