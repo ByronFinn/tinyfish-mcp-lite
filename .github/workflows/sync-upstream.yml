@@ -1,0 +1,211 @@
+# FORK(lite): weekly upstream sync — merges upstream/main and validates the
+# merge IN THIS WORKFLOW (lint / type-check / unit tests / real-upstream
+# integration when the API key secret exists), then opens a PR. The PR is
+# created with GITHUB_TOKEN, which does NOT trigger the repo's
+# on:pull_request CI — that is why the gates run here, before the PR.
+# On conflict, opens a labeled issue instead of anything destructive.
+# Manual sync instructions live in FORK.md.
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays 04:23 UTC (off the :00 mark)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/tinyfish-io/tinyfish-mcp-server.git
+  SYNC_BRANCH: sync/upstream
+  CONFLICT_LABEL: upstream-sync-conflict
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # persist-credentials: false — the gate steps below execute
+      # upstream-controlled npm lifecycle scripts (npm ci); they must not be
+      # able to read a write-capable token from .git/config. Later steps
+      # authenticate explicitly with the minimum they need.
+      - name: Checkout (full history for the merge)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream main
+          NEW_COUNT=$(git rev-list --count HEAD..upstream/main)
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "new=0" >> "$GITHUB_OUTPUT"
+            echo "Already in sync with upstream/main — nothing to do."
+            exit 0
+          fi
+          echo "new=$NEW_COUNT" >> "$GITHUB_OUTPUT"
+          UPSTREAM_SHA=$(git rev-parse --short upstream/main)
+          echo "sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          git checkout -B "$SYNC_BRANCH"
+          if git merge upstream/main --no-edit; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            # || true: a merge can also fail before leaving a merge in
+            # progress (e.g. index.lock); abort must not mask the conflict
+            # report with a set -e exit.
+            git merge --abort || true
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report conflict as an issue (no destructive PR)
+        if: steps.merge.outputs.merged == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.merge.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Dedupe by LABEL, not title search: GitHub search indexing lags
+          # minutes behind creation, and keyword search over-matches.
+          gh label create "$CONFLICT_LABEL" --color B60205 --description "Weekly upstream sync hit a merge conflict" --force
+          OPEN=$(gh issue list --state open --label "$CONFLICT_LABEL" --json number --jq 'length')
+          if [ "$OPEN" = "0" ]; then
+            BODY_FILE=$(mktemp)
+            {
+              echo "The weekly sync could not merge \`upstream/main\` (latest attempt: $SHA) cleanly."
+              echo ""
+              echo "Resolve manually (see FORK.md):"
+              echo ""
+              echo '```'
+              echo "git fetch upstream"
+              echo "git merge upstream/main"
+              echo '# On conflicts in src/index.ts: take upstream'"'"'s side, then re-apply'
+              echo '# the FORK(lite) hunks (grep "FORK(lite)" in src/index.ts).'
+              echo "npm ci && npm test && npm run type-check && npm run lint"
+              echo "git push"
+              echo '```'
+              echo ""
+              echo "Fork-owned files (src/core/tool-filter.ts, its tests, this"
+              echo "workflow, FORK.md) cannot conflict — upstream does not have them."
+              echo ""
+              echo "Close this issue once the manual sync lands."
+            } > "$BODY_FILE"
+            gh issue create --title "Upstream sync conflict (manual resolution needed)" --body-file "$BODY_FILE" --label "$CONFLICT_LABEL"
+          else
+            echo "An open conflict issue already exists — not duplicating."
+          fi
+          echo "::error::Merge conflict with upstream/main ($SHA) — see the upstream-sync-conflict issue"
+          exit 1
+
+      # Pin the same Node major the repo's CI uses (engines >=22); the
+      # runner's floating default Node is not what we validate against.
+      - name: Setup Node.js 22
+        if: steps.merge.outputs.merged == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Gate the merge (lint, type-check, unit tests)
+        if: steps.merge.outputs.merged == 'true'
+        id: gate
+        continue-on-error: true
+        run: |
+          npm ci
+          npm run lint
+          npm run type-check
+          npm test
+
+      # Real-upstream validation of the merge — here rather than on the PR,
+      # because GITHUB_TOKEN-created PRs don't start pull_request workflows.
+      # Scoped to the FORK's integration suite only: upstream's
+      # proxy.integration.test.ts executes a real paid automation (spends
+      # credits; 402s on an empty wallet), which is upstream CI's concern,
+      # not this gate's. The fork suite is free-tool-only: it pins the
+      # filtered tools/list against the live catalog (the drift detector for
+      # upstream renaming/adding free tools) and costs nothing to run.
+      - name: Gate the merge (real-upstream integration tests)
+        if: steps.merge.outputs.merged == 'true'
+        id: integration
+        continue-on-error: true
+        env:
+          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+        run: |
+          if [ -z "$TINYFISH_API_KEY" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "TINYFISH_API_KEY secret not configured — skipping integration gate"
+            exit 0
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          npx vitest --run --config vitest.integration.config.ts tests/tool-filter.integration.test.ts
+
+      - name: Push sync branch
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git push --force-with-lease \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "$SYNC_BRANCH"
+
+      - name: Open or update the sync PR
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.merge.outputs.sha }}
+          NEW_COUNT: ${{ steps.merge.outputs.new }}
+          GATE: ${{ steps.gate.outcome }}
+          INTEGRATION: ${{ steps.integration.outcome }}
+          INTEGRATION_SKIPPED: ${{ steps.integration.outputs.skipped }}
+        run: |
+          set -euo pipefail
+          if [ "$INTEGRATION_SKIPPED" = "true" ]; then
+            INTEG_NOTE="integration: ⏭️ skipped (TINYFISH_API_KEY secret not configured)"
+          elif [ "$INTEGRATION" = "success" ]; then
+            INTEG_NOTE="integration: ✅ passed against the real hosted upstream"
+          else
+            INTEG_NOTE="integration: ❌ FAILED — review the workflow logs"
+          fi
+          if [ "$GATE" = "success" ] && [ "$INTEGRATION_SKIPPED" != "true" ] && [ "$INTEGRATION" = "success" ]; then
+            GATE_NOTE="✅ Gate passed on the merge: lint / type-check / unit tests / $INTEG_NOTE"
+          elif [ "$GATE" = "success" ] && [ "$INTEGRATION_SKIPPED" = "true" ]; then
+            GATE_NOTE="✅ Gate passed: lint / type-check / unit tests; $INTEG_NOTE"
+          else
+            GATE_NOTE="⚠️ **Gate FAILED on the merge (lint/tests: $GATE; $INTEG_NOTE)** — review the workflow run; nothing auto-merges."
+          fi
+          TITLE="Sync upstream $SHA"
+          BODY="## Upstream sync
+
+          Merges \`upstream/main\` @ \`$SHA\` ($NEW_COUNT new commit(s)) into this fork.
+
+          $GATE_NOTE
+
+          Note: PRs opened by this workflow do not re-trigger the repo's
+          \`on: pull_request\` CI (GITHUB_TOKEN events don't start runs) — the
+          gate above, run on the exact merged tree, is the validation.
+
+          Fork-diff summary and conflict playbook: FORK.md"
+          NUMBER=$(gh pr list --head "$SYNC_BRANCH" --json number --jq 'if length > 0 then .[0].number else "" end')
+          if [ -z "$NUMBER" ]; then
+            gh pr create --base main --head "$SYNC_BRANCH" --title "$TITLE" --body "$BODY"
+          else
+            gh pr edit "$NUMBER" --title "$TITLE" --body "$BODY"
+          fi
+
+      # A scheduled run whose gates ALL failed must not report green — red
+      # runs are what GitHub emails the actor about.
+      - name: Fail the run if any gate failed
+        if: steps.merge.outputs.merged == 'true' && (steps.gate.outcome == 'failure' || steps.integration.outcome == 'failure')
+        run: |
+          echo "::error::Sync gates failed on the upstream merge — see the logs above and the opened PR"
+          exit 1

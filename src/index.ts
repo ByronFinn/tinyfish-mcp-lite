@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { ConfigError, parseConfig } from "./config.js";
 import { createProxyCore } from "./core/proxy-core.js";
+// FORK(lite): free-tool allowlist — see src/core/tool-filter.ts and FORK.md.
+import { parseToolPolicy, withToolFilter } from "./core/tool-filter.js";
 import { createMcpAdapter } from "./http/adapter.js";
 import { createAppHandler, startHttpServer } from "./http/index.js";
 import { log } from "./log.js";
@@ -13,8 +15,12 @@ function isErrnoException(err: unknown): err is Error & { code?: string } {
 
 async function main(): Promise<void> {
   let config;
+  let toolPolicy; // FORK(lite)
   try {
     config = parseConfig(process.env);
+    // FORK(lite): TINYFISH_TOOLS allowlist (default: the free search +
+    // fetch_content; "*" restores unfiltered upstream passthrough).
+    toolPolicy = parseToolPolicy(process.env.TINYFISH_TOOLS);
   } catch (err) {
     if (err instanceof ConfigError) {
       process.stderr.write(`${err.message}\n`);
@@ -25,7 +31,13 @@ async function main(): Promise<void> {
 
   // The real MCP handler: origin/routing shell → adapter → proxy core.
   // createProxyCore registers session teardown into shutdownHooks itself.
-  const core = createProxyCore({ upstreamUrl: config.upstreamUrl, apiKey: config.apiKey });
+  // FORK(lite): the decorator hides non-allowed tools from tools/list and
+  // answers tools/call for them locally — paid tools are never advertised
+  // and never invoked upstream.
+  const core = withToolFilter(
+    createProxyCore({ upstreamUrl: config.upstreamUrl, apiKey: config.apiKey }),
+    toolPolicy
+  );
   const handler = createAppHandler(createMcpAdapter(core));
 
   let server;
@@ -45,6 +57,15 @@ async function main(): Promise<void> {
   log.info(
     `listening on http://127.0.0.1:${config.port} — upstream ${config.upstreamUrl} — v${VERSION}`
   );
+  // FORK(lite): state the active tool policy so a "missing tool" is never a
+  // mystery. Tool names only — never the API key.
+  if (toolPolicy.mode === "allow") {
+    log.info(
+      `tool filter: exposing [${[...toolPolicy.allowed].join(", ")}] — set TINYFISH_TOOLS=* to expose every upstream tool`
+    );
+  } else {
+    log.info("tool filter: off (TINYFISH_TOOLS=*) — exposing every upstream tool");
+  }
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {

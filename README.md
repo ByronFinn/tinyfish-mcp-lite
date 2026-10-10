@@ -2,6 +2,14 @@
 
 [![npm version](https://img.shields.io/npm/v/@tiny-fish/mcp)](https://www.npmjs.com/package/@tiny-fish/mcp)
 
+> **⚠️ You are on `tinyfish-mcp-lite`** — a fork that exposes **only the two
+> free hosted tools** (`search`, `fetch_content`) and hides the 26 paid ones,
+> so they neither burn client context tokens (~72% smaller `tools/list`) nor
+> can ever be invoked through this proxy. **Start here:
+> [Using this fork](#using-this-fork-tinyfish-mcp-lite)** · fork guide:
+> [FORK.md](FORK.md). Everything below this section is inherited from
+> upstream and describes the unfiltered behavior unless noted.
+
 TinyFish MCP server: web search, page fetching and extraction, browser
 automation and page monitoring for Claude, Cursor, VS Code and any MCP
 client. Search and Fetch are free.
@@ -21,11 +29,60 @@ byte-verbatim, and non-streaming JSON responses are relayed content-identical
 (parsed and re-serialized, deep-equal to upstream). What the hosted server
 says is what your client sees.
 
+## Using this fork (tinyfish-mcp-lite)
+
+Everything below about install, API key, and client configuration applies to
+this fork too — with exactly these differences:
+
+- **Only the free tools are exposed.** `tools/list` returns exactly
+  `search` and `fetch_content` (their schemas verbatim from upstream). All
+  other tools are hidden.
+- **Paid tools cannot be invoked.** A `tools/call` naming a hidden tool is
+  answered locally with the same error the hosted server itself produces for
+  an unknown tool (HTTP 400, JSON-RPC `-32602 "Unknown tool: <name>"`) — the
+  request never leaves your machine, so it can never bill. Notification-
+  shaped calls and JSON-RPC batches carrying hidden tools are blocked the
+  same way.
+- **One extra env var, `TINYFISH_TOOLS`** (default `search,fetch_content`):
+  a comma-separated allowlist. Set `TINYFISH_TOOLS=*` to restore the full
+  upstream catalog (28 tools, unfiltered). Invalid values abort startup.
+- **A second startup log line** states the active filter, e.g.
+  `tinyfish-mcp [info] tool filter: exposing [search, fetch_content] — set TINYFISH_TOOLS=* to expose every upstream tool`.
+
+### Install (this fork)
+
+The npm package name below belongs to **upstream** — installing it gets the
+unfiltered server. To use this fork, install it from GitHub (requires
+Node.js >= 22):
+
+```sh
+# one-liner (the fork's prepare script builds dist/ during install)
+npm install -g github:ByronFinn/tinyfish-mcp-lite
+TINYFISH_API_KEY=tf_... tinyfish-mcp
+
+# or from a clone
+git clone https://github.com/ByronFinn/tinyfish-mcp-lite.git
+cd tinyfish-mcp-lite
+npm ci && npm run build
+TINYFISH_API_KEY=tf_... node dist/index.js
+```
+
+Then point your MCP client at `http://127.0.0.1:3711/mcp` exactly as
+described in [Client configuration](#client-configuration) below.
+
+Why a fork at all: the hosted server's paid tools (automation, browsers,
+monitors…) are unusable without wallet funds, but their schemas still land
+in every client session. If you only ever use the free search/fetch, this
+fork keeps the client context lean and makes accidental paid calls
+impossible. Fork maintenance and upstream-sync details: [FORK.md](FORK.md).
+
 ## Tools
 
 The hosted server exposes 28 tools. You can use them to search the web, fetch and
 extract pages, automate browsers, run remote Chrome sessions (CDP), keep
 signed-in Browser Context Profiles and schedule page and topic Monitors.
+(In this fork only the `Search & Fetch` row is advertised — see
+[Using this fork](#using-this-fork-tinyfish-mcp-lite).)
 
 | Category | Tools |
 |---|---|
@@ -169,6 +226,7 @@ no GET SSE channel and no DELETE session teardown). `GET /healthz` returns
 | `TINYFISH_API_KEY` | (required) | TinyFish API key, sent upstream as `X-API-Key`. The server refuses to start without it. |
 | `PORT` | `3711` | Local listen port (integer 1-65535). No auto-increment: if the port is busy the server exits with an error. |
 | `TINYFISH_UPSTREAM_URL` | `https://agent.tinyfish.ai/mcp` | Upstream MCP URL. Must be `https:`; `http:` is allowed only for `127.0.0.1`/`localhost` (local testing). |
+| `TINYFISH_TOOLS` | `search,fetch_content` | **Fork only:** comma-separated allowlist of upstream tools to expose; `*` disables filtering and exposes the full upstream catalog. Invalid values abort startup. |
 
 The proxy also sends attribution headers on every upstream call:
 `X-TF-Request-Origin: tinyfish-mcp`, `X-TF-Client-Name: tinyfish-mcp`, and
@@ -253,6 +311,9 @@ automation and spends credits.
 
 Maintained by [@Zechereh](https://github.com/Zechereh). Bugs and feature
 requests: [GitHub issues](https://github.com/tinyfish-io/tinyfish-mcp-server/issues).
+This fork is maintained at
+[ByronFinn/tinyfish-mcp-lite](https://github.com/ByronFinn/tinyfish-mcp-lite);
+fork-specific questions live in [FORK.md](FORK.md).
 
 ## License
 

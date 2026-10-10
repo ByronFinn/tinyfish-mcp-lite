@@ -65,4 +65,8 @@ jobs:
         run: npm ci
       - name: Integration tests (real hosted upstream)
         if: steps.key.outputs.present == 'true'
-        run: npm run test:integration
+        # FORK(lite): scoped to the fork's free-tool suite. Upstream's
+        # proxy.integration.test.ts executes a real paid automation (spends
+        # wallet credits, or 402s on an empty wallet) — not something this
+        # fork should run on every push by default.
+        run: npx vitest --run --config vitest.integration.config.ts tests/tool-filter.integration.test.ts
