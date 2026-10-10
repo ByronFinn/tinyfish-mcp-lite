@@ -9,6 +9,7 @@
  * under tsx) to cover argv wiring, stdout purity and exit-on-stdin-close.
  */
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -32,7 +33,10 @@ class LineReader {
   private readonly waiters: Array<{ resolve: (line: string) => void }> = [];
 
   constructor(output: PassThrough) {
-    output.on("data", (chunk: Buffer) => this.push(chunk.toString("utf8")));
+    // Decode as utf8 across chunk boundaries (mock tool results may carry
+    // non-ASCII); chunk.toString("utf8") would corrupt split multibyte chars.
+    output.setEncoding("utf8");
+    output.on("data", (chunk: string) => this.push(chunk));
   }
 
   private push(chunk: string): void {
@@ -243,7 +247,8 @@ describe("stdio transport (mock upstream)", () => {
       method: "ping",
     });
     // Keep the batch on the same connection after a valid request: only the
-    // batch must fail, and the valid one must still succeed.
+    // batch must fail, and the valid one must still succeed — both responses
+    // are consumed and asserted (order is not guaranteed; ids disambiguate).
     t.send([
       {
         jsonrpc: "2.0",
@@ -252,10 +257,14 @@ describe("stdio transport (mock upstream)", () => {
         params: { name: "run_web_automation", arguments: { goal: "nope" } },
       },
     ]);
-    const batchLine = JSON.parse(await t.reader.next());
-    expect(batchLine.id).toBe(-1);
-    expect(batchLine.error.code).toBe(-32600);
-    expect(mock.seen.length).toBe(seenBefore);
+    const responses = [JSON.parse(await t.reader.next()), JSON.parse(await t.reader.next())];
+    const batchLine = responses.find((line) => line.id === -1);
+    const pingLine = responses.find((line) => line.id === 2);
+    expect(batchLine?.error?.code).toBe(-32600);
+    expect(pingLine?.result).toBeDefined();
+    // The ping legitimately reached upstream; the batch must not have.
+    expect(mock.seen.length).toBe(seenBefore + 1);
+    expect(mock.seen[mock.seen.length - 1].method).toBe("ping");
 
     t.input.end();
     await t.run;
@@ -331,6 +340,88 @@ describe("stdio transport (mock upstream)", () => {
     t.input.end();
     await t.run;
   });
+
+  it("a pipelined ping during the initialize round-trip rides the bridged session", async () => {
+    // JSON-RPC allows pipelining and the MCP lifecycle allows pings in this
+    // window; the gate must hold the ping until initialize settles so it
+    // forwards with the bridged upstream session (the mock rejects
+    // session-less non-initialize requests, so a leak would error here).
+    const t = startTransport("echo");
+    const seenBefore = mock.seen.length;
+    t.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    t.send({ jsonrpc: "2.0", id: 2, method: "ping" });
+
+    const initLine = JSON.parse(await t.reader.next());
+    expect(initLine.id).toBe(1);
+    const pingLine = JSON.parse(await t.reader.next());
+    expect(pingLine.id).toBe(2);
+    expect(pingLine.result).toBeDefined();
+
+    const initEntry = mock.seen[seenBefore];
+    const pingEntry = mock.seen[seenBefore + 1];
+    expect(initEntry.method).toBe("initialize");
+    expect(pingEntry.method).toBe("ping");
+    expect(pingEntry.sessionId).toBe(initEntry.sessionId);
+
+    t.input.end();
+    await t.run;
+  });
+
+  it("a notification whose upstream hop fails writes no stdout line", async () => {
+    // JSON-RPC forbids replying to notifications: the transport error is
+    // stderr-logged only, never an id-null error line on stdout.
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const deadCore = withToolFilter(
+      createProxyCore({ upstreamUrl: "http://127.0.0.1:1/mcp", apiKey: API_KEY, hooks: null }),
+      parseToolPolicy("echo")
+    );
+    const reader = new LineReader(output);
+    const run = runStdioTransport(deadCore, { input, output });
+
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    await reader.expectSilence(300);
+
+    input.end();
+    await run;
+  });
+
+  it("backpressure (write() === false) still delivers every line and resolves after stdin end", async () => {
+    const input = new PassThrough();
+    // 1-byte high-water mark: every meaningful write reports false and must
+    // wait for drain; the reader keeps draining, so nothing stalls.
+    const output = new PassThrough({ highWaterMark: 1 });
+    const core = withToolFilter(
+      createProxyCore({ upstreamUrl: mock.url, apiKey: API_KEY, hooks: null }),
+      parseToolPolicy("echo")
+    );
+    const reader = new LineReader(output);
+    const run = runStdioTransport(core, { input, output });
+    const send = (message: unknown): void => {
+      input.write(`${JSON.stringify(message)}\n`);
+    };
+
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    const initLine = JSON.parse(await reader.next());
+    expect(initLine.id).toBe(1);
+
+    send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const listLine = JSON.parse(await reader.next());
+    expect(listLine.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["echo"]);
+
+    input.end();
+    await run;
+  });
 });
 
 describe("stdio transport (spawned entrypoint end-to-end)", () => {
@@ -401,4 +492,58 @@ describe("stdio transport (spawned entrypoint end-to-end)", () => {
     });
     expect(code).toBe(0);
   }, 20000);
+});
+
+describe("stdio transport (published dist smoke)", () => {
+  // Guards the shipped artifact, not just tsx+src: a stale dist/ without the
+  // --stdio branch would silently fall back to HTTP mode and hang here —
+  // exactly the failure mode that once passed the whole suite green. CI runs
+  // build before test; locally the suite skips when dist/ does not exist yet.
+  const distIndex = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+
+  it.skipIf(!existsSync(distIndex))(
+    "dist/index.js --stdio serves the filtered proxy and exits on stdin close",
+    async () => {
+      const mock = await startMockUpstream();
+      const child = spawn(process.execPath, [distIndex, "--stdio"], {
+        env: {
+          ...process.env,
+          TINYFISH_API_KEY: API_KEY,
+          TINYFISH_UPSTREAM_URL: mock.url,
+          TINYFISH_TOOLS: "echo",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const reader = new LineReader(child.stdout as unknown as PassThrough);
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+
+      child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "dist-smoke", version: "1" },
+          },
+        })}\n`
+      );
+      const initLine = JSON.parse(await reader.next());
+      expect(initLine.id).toBe(1);
+      expect(initLine.result).toEqual(MOCK_INITIALIZE_RESULT);
+      expect(stderr).toContain("stdio transport");
+
+      child.stdin.end();
+      const [code] = await new Promise<[number | null]>((resolve) => {
+        child.on("exit", (code) => resolve([code]));
+      });
+      expect(code).toBe(0);
+      await mock.close();
+    },
+    20000
+  );
 });

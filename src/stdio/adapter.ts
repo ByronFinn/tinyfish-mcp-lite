@@ -20,23 +20,35 @@
  * - No status codes, no headers: upstream's JSON-RPC body is the message;
  *   a JSON-RPC error body relays verbatim, and failures upstream never
  *   answered as JSON-RPC are shaped through toJsonRpcError (same as HTTP).
- * - One client, one session: the localKey is the constant "stdio" — the
- *   core stores the upstream session id on that entry at initialize and
- *   replays it on every later call. No Mcp-Session-Id plumbing exists here.
- * - A parse error answers with id null (JSON-RPC rule for unparseable
- *   input) rather than the HTTP hop's -1: there is no upstream shape to
- *   stay byte-compatible with on this transport.
+ *   A notification whose upstream hop fails writes NOTHING — JSON-RPC forbids
+ *   replying to notifications, and an id-null error line would be protocol
+ *   garbage to an id-dispatching client; the failure is logged to stderr.
+ * - One client, one session: the localKey is the empty string — the same
+ *   session-less shape the HTTP hop uses — so before initialize bridges the
+ *   real upstream session id, upstream.post omits Mcp-Session-Id entirely and
+ *   no adapter-invented id can reach the wire. While an initialize round-trip
+ *   is outstanding, further lines are queued (JSON-RPC pipelining is legal,
+ *   and the MCP lifecycle even allows pings in this window) and dispatched in
+ *   arrival order once it settles, so they ride the bridged upstream session.
+ * - A parse error answers with id null (JSON-RPC rule for unparseable input)
+ *   rather than the HTTP hop's -1: there is no upstream shape to stay
+ *   byte-compatible with on this transport.
  * - Progress notifications from a streamed tools/call relay to stdout as
  *   ordinary JSON-RPC notification lines (MCP stdio allows server → client
- *   notifications any time), serialized through the same write queue as
- *   responses.
+ *   notifications any time). onEvent returns the write promise so the core's
+ *   frame loop awaits each relayed frame — stdout backpressure propagates to
+ *   the upstream stream (the OnEvent contract) and a dead stdout surfaces as
+ *   LocalWriteError instead of being silently swallowed.
  *
  * Writes are queued (requests dispatch concurrently — a slow search must not
  * stall pings — so responses may become ready out of order, which JSON-RPC
- * ids disambiguate), and each write respects pipe backpressure: a full
- * tools/list line is far larger than PIPE_BUF, so writes must never overlap
- * mid-line. stdin end drains the queue before the run promise resolves, so
- * the caller's exit never truncates a half-written response.
+ * ids disambiguate; the queue serializes the write() calls, so lines can
+ * never interleave mid-line) and each write respects pipe backpressure.
+ * Shutdown (stdin close, stdin error, stdout error or close) aborts in-flight
+ * upstream fetches via core.close, waits for the outstanding handlers so
+ * their final (often error) responses still reach a client that is draining
+ * stdout, then drains the write queue before resolving — the caller's exit
+ * never truncates a half-written line.
  */
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
@@ -44,8 +56,8 @@ import { ProxyCoreError, toJsonRpcError } from "../core/errors.js";
 import { requestIdOf, type OnEvent, type ProxyCore } from "../core/proxy-core.js";
 import { log } from "../log.js";
 
-/** stdio serves exactly one client, so the local session key is a constant. */
-const SESSION_KEY = "stdio";
+/** stdio serves exactly one client; "" matches the HTTP hop's session-less shape. */
+const SESSION_KEY = "";
 
 export interface StdioStreams {
   input: Readable;
@@ -53,10 +65,10 @@ export interface StdioStreams {
 }
 
 /**
- * Run the transport until `streams.input` ends (the client closed its pipe —
- * MCP stdio shutdown) or `streams.output` errors (EPIPE: the client died
- * without closing stdin). Resolves void; the caller runs shutdown hooks and
- * exits.
+ * Run the transport until `streams.input` ends or errors (the client closed
+ * or lost its pipe — MCP stdio shutdown) or `streams.output` errors/closes
+ * (EPIPE: the client died without closing stdin). Resolves void; the caller
+ * runs shutdown hooks and exits.
  */
 export function runStdioTransport(
   core: ProxyCore,
@@ -69,49 +81,69 @@ export function runStdioTransport(
 
   let writeChain: Promise<void> = Promise.resolve();
   let finished = false;
+  let inflight = 0;
+  let inflightSettled: (() => void) | null = null;
+  let initGate: Promise<void> | null = null;
+  const gatedLines: string[] = [];
+
+  /**
+   * Chain a write onto the queue and hand the promise back — onEvent returns
+   * it so upstream SSE frames are relayed one awaited write at a time.
+   */
+  const enqueue = (message: unknown): Promise<void> => {
+    const write = writeChain.then(() => writeLine(streams.output, message));
+    // Keep the queue alive after a failed write (dying client); `write`
+    // itself still rejects, preserving the LocalWriteError contract.
+    writeChain = write.then(
+      () => undefined,
+      () => undefined
+    );
+    return write;
+  };
+
+  /** Fire-and-forget enqueue for responses; a failed stdout write is logged. */
+  const emit = (message: unknown): void => {
+    void enqueue(message).catch((err) => {
+      log.warn(`writing to stdout failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
 
   const finish = (): void => {
     if (finished) return;
     finished = true;
     input.close();
-    // Drain pending writes before resolving: the caller exits right after,
-    // and process.exit would truncate an in-flight line.
-    void writeChain.finally(() => resolveRun());
+    void (async () => {
+      // Abort in-flight upstream fetches for this session so the handlers
+      // below settle promptly (idempotent — the caller's shutdown hooks run
+      // core.closeAll() on top, covering the rest of the session store).
+      core.close(SESSION_KEY);
+      // Let the outstanding handlers land their final responses before the
+      // drain below captures the queue, so a client still draining stdout
+      // receives them instead of a truncated stream.
+      if (inflight > 0) {
+        await new Promise<void>((resolve) => {
+          inflightSettled = resolve;
+        });
+      }
+      await writeChain;
+      resolveRun();
+    })();
   };
 
-  const enqueue = (message: unknown): void => {
-    writeChain = writeChain
-      .then(() => writeLine(streams.output, message))
-      .catch((err) => {
-        // A failed stdout write means the local client is dying (EPIPE);
-        // the output 'error' handler finishes the transport.
-        log.warn(`writing to stdout failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+  const settleInflight = (): void => {
+    inflight -= 1;
+    if (inflight === 0 && inflightSettled !== null) {
+      const settle = inflightSettled;
+      inflightSettled = null;
+      settle();
+    }
   };
 
   // Relayed SSE progress frames (free tools never stream today, but the
   // relay must exist so the stdio path can never orphan upstream progress).
-  const onEvent: OnEvent = (event) => {
-    enqueue(event);
-  };
+  const onEvent: OnEvent = (event) => enqueue(event);
 
-  async function handleLine(line: string): Promise<void> {
-    const trimmed = line.trim();
-    if (trimmed === "") return;
-
-    let message: unknown;
-    try {
-      message = JSON.parse(trimmed);
-    } catch {
-      // Unparseable input: the one message answered without forwarding.
-      enqueue({
-        jsonrpc: "2.0",
-        error: { code: -32700, message: "Parse error: Invalid JSON" },
-        id: null,
-      });
-      return;
-    }
-
+  async function routeMessage(message: unknown): Promise<void> {
     try {
       if (isNotification(message)) {
         await core.notify(SESSION_KEY, message);
@@ -122,13 +154,13 @@ export function runStdioTransport(
 
       if (method === "initialize") {
         const response = await core.initialize(SESSION_KEY, message, protocolVersionOf(message));
-        enqueue(response.body);
+        emit(response.body);
         return;
       }
 
       if (method === "tools/call") {
         const response = await core.forwardStream(SESSION_KEY, message, onEvent);
-        enqueue(response.body);
+        emit(response.body);
         return;
       }
 
@@ -136,7 +168,7 @@ export function runStdioTransport(
       // (never-initiated) server requests, unknown methods, and batch arrays —
       // forwards generically, byte-for-byte the HTTP adapter's fallthrough.
       const response = await core.forward(SESSION_KEY, message);
-      enqueue(response.body);
+      emit(response.body);
     } catch (err) {
       // Same classification as the HTTP adapter: classified core errors log
       // their message; anything else is a proxy bug (full stack, generic
@@ -150,13 +182,75 @@ export function runStdioTransport(
           }`
         );
       }
-      enqueue(toJsonRpcError(err, requestIdOf(message)).body);
+      // A notification has no response channel — JSON-RPC forbids replying
+      // to one, so its upstream failure only logs (see module comment).
+      if (!isNotification(message)) {
+        emit(toJsonRpcError(err, requestIdOf(message)).body);
+      }
     }
+  }
+
+  async function dispatchMessage(message: unknown): Promise<void> {
+    inflight += 1;
+    try {
+      await routeMessage(message);
+    } finally {
+      settleInflight();
+    }
+  }
+
+  function handleLine(line: string): void {
+    if (finished) return;
+    const trimmed = line.trim();
+    if (trimmed === "") return;
+
+    if (initGate !== null) {
+      // Pipelined behind an in-flight initialize: queued, dispatched in
+      // arrival order once it settles (see module comment).
+      gatedLines.push(trimmed);
+      return;
+    }
+
+    let message: unknown;
+    try {
+      message = JSON.parse(trimmed);
+    } catch {
+      // Unparseable input: the one message answered without forwarding.
+      emit({
+        jsonrpc: "2.0",
+        error: { code: -32700, message: "Parse error: Invalid JSON" },
+        id: null,
+      });
+      return;
+    }
+
+    if (!isNotification(message) && methodOf(message) === "initialize") {
+      // Install the gate before any await so lines arriving during the
+      // round-trip hit the queue above, then flush it in order.
+      const gate = dispatchMessage(message);
+      initGate = gate;
+      void gate.finally(() => {
+        initGate = null;
+        if (!finished) {
+          for (const queued of gatedLines.splice(0)) handleLine(queued);
+        }
+      });
+      return;
+    }
+
+    void dispatchMessage(message);
   }
 
   const input = createInterface({ input: streams.input });
   input.on("line", (line) => {
-    void handleLine(line);
+    handleLine(line);
+  });
+  // readline re-emits an input-stream error here; without this listener the
+  // 'error' event is unhandled (crash, hooks never run) and 'close' never
+  // fires afterwards — hence the explicit finish().
+  input.on("error", (err) => {
+    log.warn(`stdin error: ${err instanceof Error ? err.message : String(err)}`);
+    finish();
   });
   input.on("close", finish);
   streams.output.on("error", (err) => {
@@ -165,6 +259,8 @@ export function runStdioTransport(
     );
     finish();
   });
+  // stdout destroyed without an error event (silent destroy): still shut down.
+  streams.output.on("close", finish);
 
   return run;
 }

@@ -13,14 +13,30 @@ function isErrnoException(err: unknown): err is Error & { code?: string } {
   return err instanceof Error && "code" in err;
 }
 
+// FORK(lite): stdio shutdown hook runner — mirrors the HTTP branch's shutdown
+// path (core.closeAll aborts in-flight upstream fetches).
+async function runShutdownHooks(): Promise<void> {
+  for (const hook of shutdownHooks) {
+    try {
+      await hook();
+    } catch (err) {
+      log.error(`shutdown hook failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
+  // FORK(lite): stdio owns no port — drop PORT from the environment the
+  // config parses, so a stray PORT (e.g. copied from another server's client
+  // config block) cannot abort a transport that never listens.
+  const env = process.argv.includes("--stdio") ? { ...process.env, PORT: undefined } : process.env;
   let config;
   let toolPolicy; // FORK(lite)
   try {
-    config = parseConfig(process.env);
+    config = parseConfig(env);
     // FORK(lite): TINYFISH_TOOLS allowlist (default: the free search +
     // fetch_content; "*" restores unfiltered upstream passthrough).
-    toolPolicy = parseToolPolicy(process.env.TINYFISH_TOOLS);
+    toolPolicy = parseToolPolicy(env.TINYFISH_TOOLS);
   } catch (err) {
     if (err instanceof ConfigError) {
       process.stderr.write(`${err.message}\n`);
@@ -54,14 +70,16 @@ async function main(): Promise<void> {
     } else {
       log.info("tool filter: off (TINYFISH_TOOLS=*) — exposing every upstream tool");
     }
+    // The client normally shuts us down by closing stdin; a signal (client
+    // killed, terminal gone) must still run the hooks — closeAll aborts
+    // in-flight upstream fetches — instead of the default hard exit.
+    const onSignal = (): void => {
+      void runShutdownHooks().then(() => process.exit(0));
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
     await runStdioTransport(core);
-    for (const hook of shutdownHooks) {
-      try {
-        await hook();
-      } catch (err) {
-        log.error(`shutdown hook failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    await runShutdownHooks();
     process.exit(0);
   }
 
