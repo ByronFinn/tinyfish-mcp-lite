@@ -38,6 +38,33 @@ async function main(): Promise<void> {
     createProxyCore({ upstreamUrl: config.upstreamUrl, apiKey: config.apiKey }),
     toolPolicy
   );
+
+  // FORK(lite): stdio transport — spawn-and-forget mode for clients that
+  // launch their MCP servers as commands (`tinyfish-mcp --stdio`, or
+  // `npx -y tinyfish-mcp-lite --stdio`). Same core, same filter; the client
+  // owns the lifecycle (stdin closed ⇒ exit), so no PORT and no long-running
+  // server. See src/stdio/adapter.ts and FORK.md.
+  if (process.argv.includes("--stdio")) {
+    const { runStdioTransport } = await import("./stdio/adapter.js");
+    log.info(`stdio transport — upstream ${config.upstreamUrl} — v${VERSION}`);
+    if (toolPolicy.mode === "allow") {
+      log.info(
+        `tool filter: exposing [${[...toolPolicy.allowed].join(", ")}] — set TINYFISH_TOOLS=* to expose every upstream tool`
+      );
+    } else {
+      log.info("tool filter: off (TINYFISH_TOOLS=*) — exposing every upstream tool");
+    }
+    await runStdioTransport(core);
+    for (const hook of shutdownHooks) {
+      try {
+        await hook();
+      } catch (err) {
+        log.error(`shutdown hook failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    process.exit(0);
+  }
+
   const handler = createAppHandler(createMcpAdapter(core));
 
   let server;

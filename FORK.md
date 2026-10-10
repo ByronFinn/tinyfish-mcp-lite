@@ -1,7 +1,9 @@
 # tinyfish-mcp-lite — fork guide
 
 This repository is a **fork of [tinyfish-io/tinyfish-mcp-server](https://github.com/tinyfish-io/tinyfish-mcp-server)**
-with exactly one divergence: it exposes only the **free** hosted tools.
+with two divergences from upstream: it exposes only the **free** hosted tools,
+and it adds a **stdio transport** (`--stdio`) for clients that launch their MCP
+servers as commands.
 
 The hosted TinyFish MCP server advertises 28 tools (at the time of writing),
 but only `search` and `fetch_content` are free (official rates: search
@@ -42,11 +44,13 @@ All fork logic lives in **fork-owned files**, marked so merges stay trivial:
 | File                                    | Status                   | Purpose                                                                                                                               |
 | --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/core/tool-filter.ts`               | fork-only                | policy parsing (`parseToolPolicy`) + `ProxyCore` decorator (`withToolFilter`)                                                         |
+| `src/stdio/adapter.ts`                  | fork-only                | stdio transport (`--stdio`): newline-delimited JSON-RPC over stdin/stdout, same core, same filter — spawn-and-forget clients          |
 | `tests/tool-filter.test.ts`             | fork-only                | unit + full-flow tests (mock upstream)                                                                                                |
 | `tests/tool-filter.integration.test.ts` | fork-only                | real-upstream integration tests                                                                                                       |
+| `tests/stdio.test.ts`                   | fork-only                | stdio transport tests: in-process routing matrix + one spawn-the-entrypoint e2e                                                       |
 | `.github/workflows/sync-upstream.yml`   | fork-only                | weekly upstream sync PR (see below)                                                                                                   |
 | `FORK.md`                               | fork-only                | this file                                                                                                                             |
-| `src/index.ts`                          | **edited upstream file** | 4 small hunks, each tagged `FORK(lite)` — import, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, startup log lines |
+| `src/index.ts`                          | **edited upstream file** | 5 small hunks, each tagged `FORK(lite)` — import, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, the `--stdio` branch, startup log lines |
 | `README.md`                             | **edited upstream file** | fork banner at the top + a "Using this fork" section (install, differences), a `TINYFISH_TOOLS` env row, small fork notes elsewhere  |
 | `package.json`                          | **edited upstream file** | renamed to `tinyfish-mcp-lite` (published on npm; repository/homepage/bugs/mcpName point at the fork), `"prepare": "npm run build"` + an `allowScripts` object for npm ≥ 11.17 script-policy installs, bin target without the `./` prefix (npm ≥ 11.17 publish normalization drops `bin` otherwise) |
 | `.github/workflows/ci.yml`              | **edited upstream file** | integration leg scoped to the fork's free-tool suite (`FORK(lite)` note on the step) — upstream's suite runs a real paid automation |
@@ -121,20 +125,60 @@ install-script policy (`allow-scripts`) never blocks it. Note for new
 package names: the first publish lands as a `0.0.0-stage` placeholder until
 you confirm the release on npmjs.com — later versions publish directly.
 
+### Transport note (stdio)
+
+The stdio transport (`--stdio`) exists so clients that spawn their MCP
+servers as commands get the one-command experience. It is fork-only code:
+upstream's routing shell in `src/index.ts` grows exactly one hunk (the
+`--stdio` branch). Routing mirrors `src/http/adapter.ts`'s `route()`
+one-to-one, so every filter guarantee on the HTTP hop holds on stdio too —
+pinned by `tests/stdio.test.ts`. On conflict during an upstream sync: take
+upstream's `src/index.ts`, re-apply the five `FORK(lite)` hunks (the stdio
+branch is the one importing `./stdio/adapter.js`).
+
+### Releasing to npm
+
+The fork publishes as [`tinyfish-mcp-lite`](https://www.npmjs.com/package/tinyfish-mcp-lite)
+(`publishConfig.registry` points at npmjs). After landing upstream changes
+worth shipping:
+
+```sh
+npm version minor        # or patch / major
+npm publish              # builds dist/ via prepublishOnly; no install-time scripts
+git push --follow-tags
+```
+
+The published package carries no install-time lifecycle scripts, so npm's
+install-script policy (`allow-scripts`) never blocks it. Note for new
+package names: the first publish lands as a `0.0.0-stage` placeholder until
+you confirm the release on npmjs.com — later versions publish directly.
+
+### Transport note (stdio)
+
+The stdio transport (`--stdio`) exists so clients that spawn their MCP
+servers as commands get the one-command experience. It is fork-only code:
+upstream's routing shell in `src/index.ts` grows exactly one hunk (the
+`--stdio` branch). Routing mirrors `src/http/adapter.ts`'s `route()`
+one-to-one, so every filter guarantee on the HTTP hop holds on stdio too —
+pinned by `tests/stdio.test.ts`. On conflict during an upstream sync: take
+upstream's `src/index.ts`, re-apply the five `FORK(lite)` hunks (the stdio
+branch is the one importing `./stdio/adapter.js`).
+
 ### Resolving conflicts
 
 - `src/index.ts` is the only upstream file with functional edits. On
   conflict, take **upstream's** side, then re-apply the `FORK(lite)` hunks
   (grep for the marker): the import, the `parseToolPolicy`/`withToolFilter`
-  wiring, and the startup log lines.
+  wiring, the `--stdio` branch, and the startup log lines.
 - `README.md`: take upstream's side, then re-apply the fork sections — the
   top banner, "Using this fork (tinyfish-mcp-lite)" with its Install
   subsection, the `TINYFISH_TOOLS` row in the env-var table, and the short
   fork notes in Tools/Maintenance.
 - `package.json`: keep upstream's side plus the `"prepare": "npm run build"`
   line.
-- Fork-owned files (`tool-filter.ts`, its tests, `sync-upstream.yml`,
-  `FORK.md`) exist only here — upstream cannot conflict with them.
+- Fork-owned files (`tool-filter.ts`, its tests, `stdio/adapter.ts`, the stdio
+  tests, `sync-upstream.yml`, `FORK.md`) exist only here — upstream cannot
+  conflict with them.
 - After any sync, check the upstream README/tool docs for **new free
   tools**: if TinyFish adds one, extend `DEFAULT_ALLOWED_TOOLS` in
   `src/core/tool-filter.ts` (the real-upstream integration test pins the

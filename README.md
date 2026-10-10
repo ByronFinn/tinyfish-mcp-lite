@@ -51,22 +51,49 @@ this fork too — with exactly these differences:
 
 ### Install (this fork)
 
-The fork ships on npm as **`tinyfish-mcp-lite`** (requires Node.js >= 22):
+The fork ships on npm as **`tinyfish-mcp-lite`** (requires Node.js >= 22).
+Two transports are available:
+
+**stdio — one command, the client manages the process.** Most clients that
+launch MCP servers as commands (Claude Code with a `command` entry, Cursor,
+Zed, many launcher UIs) want this:
 
 ```sh
-# run without installing
-TINYFISH_API_KEY=tf_... npx tinyfish-mcp-lite
+# the client spawns it; add TINYFISH_API_KEY to the command's environment
+npx -y tinyfish-mcp-lite --stdio
 
-# or install globally for the `tinyfish-mcp` command
-npm install -g tinyfish-mcp-lite
-TINYFISH_API_KEY=tf_... tinyfish-mcp
+# or with the global install (`npm i -g tinyfish-mcp-lite`):
+tinyfish-mcp --stdio
+```
 
+In a client config that takes a command + env vars, that is:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "tinyfish-mcp-lite", "--stdio"],
+  "env": { "TINYFISH_API_KEY": "tf_..." }
+}
+```
+
+**HTTP — one shared server for several clients.** Start it once (terminal,
+systemd, pm2) and point every client at the same URL:
+
+```sh
+TINYFISH_API_KEY=tf_... npx tinyfish-mcp-lite          # no --stdio flag
+```
+
+```sh
 # or from a clone
 git clone https://github.com/ByronFinn/tinyfish-mcp-lite.git
 cd tinyfish-mcp-lite
 npm ci && npm run build
-TINYFISH_API_KEY=tf_... node dist/index.js
+TINYFISH_API_KEY=tf_... node dist/index.js             # HTTP
+# TINYFISH_API_KEY=tf_... node dist/index.js --stdio   # stdio
 ```
+
+Both transports expose the same filtered proxy; stdio just has no port and
+no manual startup — closing the client's pipe shuts the process down.
 
 > **Note on git-based installs** (`npm i -g github:ByronFinn/tinyfish-mcp-lite`):
 > npm ≥ 11.17 with the install-script policy enabled (an `allow-scripts`
@@ -75,8 +102,8 @@ TINYFISH_API_KEY=tf_... node dist/index.js
 > clone routes instead; registry installs (`npx tinyfish-mcp-lite`) are
 > unaffected.
 
-Then point your MCP client at `http://127.0.0.1:3711/mcp` exactly as
-described in [Client configuration](#client-configuration) below.
+For the HTTP transport, point your MCP client at `http://127.0.0.1:3711/mcp`
+as described in [Client configuration](#client-configuration) below.
 
 Why a fork at all: the hosted server's paid tools (automation, browsers,
 monitors…) are unusable without wallet funds, but their schemas still land
