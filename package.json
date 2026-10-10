@@ -1,15 +1,15 @@
 {
-  "name": "@tiny-fish/mcp",
+  "name": "tinyfish-mcp-lite",
   "version": "0.1.0",
-  "description": "TinyFish local MCP server \u2014 reverse proxy to agent.tinyfish.ai/mcp",
-  "mcpName": "io.github.tinyfish-io/tinyfish-mcp-server",
+  "description": "Fork of @tiny-fish/mcp exposing only the free TinyFish tools (search, fetch_content) \u2014 local reverse proxy to agent.tinyfish.ai/mcp",
+  "mcpName": "io.github.ByronFinn/tinyfish-mcp-lite",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tinyfish-io/tinyfish-mcp-server.git"
+    "url": "git+https://github.com/ByronFinn/tinyfish-mcp-lite.git"
   },
-  "homepage": "https://github.com/tinyfish-io/tinyfish-mcp-server#readme",
+  "homepage": "https://github.com/ByronFinn/tinyfish-mcp-lite#readme",
   "bugs": {
-    "url": "https://github.com/tinyfish-io/tinyfish-mcp-server/issues"
+    "url": "https://github.com/ByronFinn/tinyfish-mcp-lite/issues"
   },
   "keywords": [
     "mcp",
@@ -19,11 +19,11 @@
     "browser-automation",
     "proxy"
   ],
-  "author": "TinyFish (https://tinyfish.ai)",
+  "author": "ByronFinn (fork of TinyFish's tinyfish-mcp-server, MIT)",
   "type": "module",
   "license": "MIT",
   "allowScripts": {
-    "@tiny-fish/mcp": true,
+    "tinyfish-mcp-lite": true,
     "esbuild": true,
     "fsevents": true
   },
