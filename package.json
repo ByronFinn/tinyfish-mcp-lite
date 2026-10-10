@@ -28,7 +28,7 @@
     "fsevents": true
   },
   "bin": {
-    "tinyfish-mcp": "./dist/index.js"
+    "tinyfish-mcp": "dist/index.js"
   },
   "files": [
     "dist/",
