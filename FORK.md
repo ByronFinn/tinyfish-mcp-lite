@@ -48,7 +48,7 @@ All fork logic lives in **fork-owned files**, marked so merges stay trivial:
 | `FORK.md`                               | fork-only                | this file                                                                                                                             |
 | `src/index.ts`                          | **edited upstream file** | 4 small hunks, each tagged `FORK(lite)` — import, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, startup log lines |
 | `README.md`                             | **edited upstream file** | fork banner at the top + a "Using this fork" section (install, differences), a `TINYFISH_TOOLS` env row, small fork notes elsewhere  |
-| `package.json`                          | **edited upstream file** | one added line: `"prepare": "npm run build"` so `npm install -g github:ByronFinn/tinyfish-mcp-lite` builds `dist/` at install time   |
+| `package.json`                          | **edited upstream file** | two additions: `"prepare": "npm run build"` (so git installs build `dist/`) and an `allowScripts` object (`@tiny-fish/mcp`, `esbuild`, `fsevents`) so npm ≥ 11.17 script-policy installs authorize them |
 | `.github/workflows/ci.yml`              | **edited upstream file** | integration leg scoped to the fork's free-tool suite (`FORK(lite)` note on the step) — upstream's suite runs a real paid automation |
 
 Every hunk that touches an upstream file carries a `FORK(lite)` comment (code)

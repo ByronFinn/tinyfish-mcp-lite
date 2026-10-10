@@ -67,6 +67,13 @@ npm ci && npm run build
 TINYFISH_API_KEY=tf_... node dist/index.js
 ```
 
+> **npm ≥ 11.17 with the install-script policy enabled** (an `allow-scripts`
+> entry in your `~/.npmrc`): git-based installs (`npx github:…`,
+> `npm install -g github:…`) fail with `EALLOWSCRIPTS` — a known npm quirk
+> where the policy reaches the inner git-dep build via the environment. Use
+> the clone route instead, then `npm install -g .` from the clone if you
+> want the `tinyfish-mcp` command on your PATH.
+
 Then point your MCP client at `http://127.0.0.1:3711/mcp` exactly as
 described in [Client configuration](#client-configuration) below.
 
