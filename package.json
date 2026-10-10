@@ -1,7 +1,7 @@
 {
   "name": "tinyfish-mcp-lite",
-  "version": "0.1.0",
-  "description": "Fork of @tiny-fish/mcp exposing only the free TinyFish tools (search, fetch_content) \u2014 local reverse proxy to agent.tinyfish.ai/mcp",
+  "version": "0.2.0",
+  "description": "Fork of @tiny-fish/mcp exposing only the free TinyFish tools (search, fetch_content) — local reverse proxy to agent.tinyfish.ai/mcp",
   "mcpName": "io.github.ByronFinn/tinyfish-mcp-lite",
   "repository": {
     "type": "git",
