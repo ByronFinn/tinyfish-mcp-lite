@@ -3,6 +3,9 @@ import { ConfigError, parseConfig } from "./config.js";
 import { createProxyCore } from "./core/proxy-core.js";
 // FORK(lite): free-tool allowlist — see src/core/tool-filter.ts and FORK.md.
 import { parseToolPolicy, withToolFilter } from "./core/tool-filter.js";
+// FORK(lite): idle watchdog so a blackholed upstream cannot hang a request
+// forever — see src/core/upstream-deadline.ts and FORK.md.
+import { withUpstreamDeadline } from "./core/upstream-deadline.js";
 import { createMcpAdapter } from "./http/adapter.js";
 import { createAppHandler, startHttpServer } from "./http/index.js";
 import { log } from "./log.js";
@@ -51,7 +54,13 @@ async function main(): Promise<void> {
   // answers tools/call for them locally — paid tools are never advertised
   // and never invoked upstream.
   const core = withToolFilter(
-    createProxyCore({ upstreamUrl: config.upstreamUrl, apiKey: config.apiKey }),
+    createProxyCore({
+      upstreamUrl: config.upstreamUrl,
+      apiKey: config.apiKey,
+      // FORK(lite): bound the upstream fetch so an unresponsive upstream fails
+      // fast as a diagnosable -32000 instead of hanging initialize silently.
+      fetchFn: withUpstreamDeadline(globalThis.fetch, config.upstreamTimeoutMs),
+    }),
     toolPolicy
   );
 
@@ -70,6 +79,13 @@ async function main(): Promise<void> {
     } else {
       log.info("tool filter: off (TINYFISH_TOOLS=*) — exposing every upstream tool");
     }
+    // FORK(lite): state the upstream idle watchdog so a hung request is never a
+    // mystery. 0 = disabled.
+    log.info(
+      config.upstreamTimeoutMs > 0
+        ? `upstream idle timeout: ${config.upstreamTimeoutMs}ms (set TINYFISH_UPSTREAM_TIMEOUT_MS=0 to disable)`
+        : "upstream idle timeout: off (TINYFISH_UPSTREAM_TIMEOUT_MS=0) — requests may hang indefinitely"
+    );
     // The client normally shuts us down by closing stdin; a signal (client
     // killed, terminal gone) must still run the hooks — closeAll aborts
     // in-flight upstream fetches — instead of the default hard exit.
@@ -111,6 +127,13 @@ async function main(): Promise<void> {
   } else {
     log.info("tool filter: off (TINYFISH_TOOLS=*) — exposing every upstream tool");
   }
+  // FORK(lite): state the upstream idle watchdog so a hung request is never a
+  // mystery. 0 = disabled.
+  log.info(
+    config.upstreamTimeoutMs > 0
+      ? `upstream idle timeout: ${config.upstreamTimeoutMs}ms (set TINYFISH_UPSTREAM_TIMEOUT_MS=0 to disable)`
+      : "upstream idle timeout: off (TINYFISH_UPSTREAM_TIMEOUT_MS=0) — requests may hang indefinitely"
+  );
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {

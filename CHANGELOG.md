@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-12
+
+### Fixed
+
+- **A silent (blackholed) upstream no longer hangs a request forever.** The
+  single upstream fetch had no timeout, so when the connection was accepted
+  but no bytes ever arrived (dead route, firewall/proxy swallowing the
+  request, hung server) `fetch` neither resolved nor rejected and the stdio
+  process sat silent — a client saw `initialize` with no response and no
+  error. An idle watchdog now bounds both the header wait and the gap between
+  JSON body chunks, so the request fails fast as a normal JSON-RPC `-32000`
+  ("… sent no data within `N`ms") with a precise stderr line instead.
+
+### Added
+
+- `TINYFISH_UPSTREAM_TIMEOUT_MS` (default `30000`; `0` disables) — the idle
+  watchdog window. It is an idle (not total) deadline, so a slow-but-alive
+  response is never cut. Only the free tools' non-streaming JSON path is
+  bounded; SSE (`run_web_automation`) is passed through untouched.
+- A third startup log line stating the active upstream idle timeout.
+
 ## [0.1.0] - 2026-08-03
 
 ### Added
@@ -36,4 +57,5 @@ and this project adheres to
   `README.md`, `LICENSE`.
 
 [Unreleased]: https://github.com/tinyfish-io/tinyfish-mcp-server/commits/main
+[0.2.2]: https://github.com/ByronFinn/tinyfish-mcp-lite/releases/tag/v0.2.2
 [0.1.0]: https://www.npmjs.com/package/@tiny-fish/mcp/v/0.1.0

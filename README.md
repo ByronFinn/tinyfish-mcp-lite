@@ -48,6 +48,11 @@ this fork too — with exactly these differences:
   upstream catalog (28 tools, unfiltered). Invalid values abort startup.
 - **A second startup log line** states the active filter, e.g.
   `tinyfish-mcp [info] tool filter: exposing [search, fetch_content] — set TINYFISH_TOOLS=* to expose every upstream tool`.
+- **An upstream idle watchdog** (`TINYFISH_UPSTREAM_TIMEOUT_MS`, default
+  30000) turns a blackholed upstream into a fast, diagnosable `-32000` instead
+  of a request that hangs forever — see
+  [Upstream idle timeout](#troubleshooting). A third startup log line states
+  the active value.
 - **A stdio transport (`--stdio`)** so a client can spawn it as a plain
   command and own its lifecycle — the recommended setup; see
   [Install (this fork)](#install-this-fork). The HTTP server is the shared
@@ -289,6 +294,7 @@ no GET SSE channel and no DELETE session teardown). `GET /healthz` returns
 | `PORT` | `3711` | Local listen port (integer 1-65535). No auto-increment: if the port is busy the server exits with an error. (Ignored by the stdio transport — it never listens.) |
 | `TINYFISH_UPSTREAM_URL` | `https://agent.tinyfish.ai/mcp` | Upstream MCP URL. Must be `https:`; `http:` is allowed only for `127.0.0.1`/`localhost` (local testing). |
 | `TINYFISH_TOOLS` | `search,fetch_content` | **Fork only:** comma-separated allowlist of upstream tools to expose; `*` disables filtering and exposes the full upstream catalog. Invalid values abort startup. |
+| `TINYFISH_UPSTREAM_TIMEOUT_MS` | `30000` | **Fork only:** idle watchdog for the upstream request. If no bytes arrive from upstream for this long (headers, or the gap between body chunks), the request fails fast with a JSON-RPC `-32000` instead of hanging — the fix for a blackholed upstream that otherwise leaves `initialize` unanswered forever. `0` disables the watchdog (wait indefinitely). |
 
 The proxy also sends attribution headers on every upstream call:
 `X-TF-Request-Origin: tinyfish-mcp`, `X-TF-Client-Name: tinyfish-mcp`, and
@@ -335,6 +341,15 @@ If a streamed `run_web_automation` call fails mid-stream you get the same
 `-32000` as the final SSE frame, with a "the run may still be executing"
 warning and the `runId` when known — check the run's status instead of
 retrying blindly.
+
+**HTTP 502 with JSON-RPC error `-32000`** ("… sent no data within
+`N`ms") — the upstream accepted the connection but went silent past the idle
+watchdog (`TINYFISH_UPSTREAM_TIMEOUT_MS`, default 30000). This is the
+deliberate fix for a blackholed upstream (dead route, firewall/proxy
+swallowing the request) that would otherwise leave a request — including
+`initialize` — unanswered forever with no error. Check your network path to
+`agent.tinyfish.ai`; if you have a legitimately slow upstream, raise the
+value, or set it to `0` to disable the watchdog and wait indefinitely.
 
 **Batch requests don't work** — MCP forbids JSON-RPC batching and the hosted
 server does not support batch arrays. The proxy forwards a batch as-is and

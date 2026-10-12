@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const DEFAULT_PORT = 3711;
 export const DEFAULT_UPSTREAM_URL = "https://agent.tinyfish.ai/mcp";
+// FORK(lite): idle watchdog default (ms) — see core/upstream-deadline.ts.
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 
 export const API_KEY_GUIDANCE = "Set TINYFISH_API_KEY — get a key at https://agent.tinyfish.ai";
 
@@ -10,6 +12,8 @@ export interface Config {
   apiKey: string;
   port: number;
   upstreamUrl: string;
+  /** FORK(lite): upstream idle timeout in ms; 0 disables the watchdog. */
+  upstreamTimeoutMs: number;
 }
 
 /** Thrown by parseConfig; `message` is the actionable stderr line(s) for the user. */
@@ -68,6 +72,24 @@ const envSchema = z.object({
       }
       return raw;
     }),
+  // FORK(lite): idle watchdog for the upstream fetch. Without it a blackholed
+  // upstream hangs `initialize` forever with no response to the client. 0
+  // disables the watchdog (restore pre-fork behavior; wait indefinitely).
+  TINYFISH_UPSTREAM_TIMEOUT_MS: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      if (value === undefined) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+      const ms = /^\d+$/.test(value) ? Number(value) : NaN;
+      if (!Number.isInteger(ms) || ms < 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Invalid TINYFISH_UPSTREAM_TIMEOUT_MS "${value}" — must be a non-negative integer (ms); 0 disables the timeout`,
+        });
+        return z.NEVER;
+      }
+      return ms;
+    }),
 });
 
 /**
@@ -83,5 +105,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     apiKey: parsed.data.TINYFISH_API_KEY,
     port: parsed.data.PORT,
     upstreamUrl: parsed.data.TINYFISH_UPSTREAM_URL,
+    upstreamTimeoutMs: parsed.data.TINYFISH_UPSTREAM_TIMEOUT_MS,
   };
 }

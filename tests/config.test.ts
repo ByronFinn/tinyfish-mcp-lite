@@ -4,6 +4,7 @@ import {
   ConfigError,
   DEFAULT_PORT,
   DEFAULT_UPSTREAM_URL,
+  DEFAULT_UPSTREAM_TIMEOUT_MS,
   parseConfig,
 } from "../src/config.js";
 
@@ -20,6 +21,7 @@ describe("parseConfig", () => {
       apiKey: "sk-test-123",
       port: 8080,
       upstreamUrl: "https://example.com/mcp",
+      upstreamTimeoutMs: DEFAULT_UPSTREAM_TIMEOUT_MS,
     });
   });
 
@@ -29,6 +31,8 @@ describe("parseConfig", () => {
     expect(config.port).toBe(3711);
     expect(config.upstreamUrl).toBe(DEFAULT_UPSTREAM_URL);
     expect(config.upstreamUrl).toBe("https://agent.tinyfish.ai/mcp");
+    expect(config.upstreamTimeoutMs).toBe(DEFAULT_UPSTREAM_TIMEOUT_MS);
+    expect(config.upstreamTimeoutMs).toBe(30_000);
   });
 
   it("ignores unrelated env vars", () => {
@@ -134,6 +138,23 @@ describe("parseConfig", () => {
           expect((err as Error).message).not.toContain("hunter2");
         }
       }
+    });
+  });
+
+  describe("TINYFISH_UPSTREAM_TIMEOUT_MS", () => {
+    it.each(["0", "250", "30000"])("accepts non-negative integer %j", (raw) => {
+      expect(parseConfig({ ...validEnv, TINYFISH_UPSTREAM_TIMEOUT_MS: raw }).upstreamTimeoutMs).toBe(
+        Number(raw)
+      );
+    });
+
+    it.each(["-1", "abc", "1.5", "1000ms", ""])("rejects invalid value %j", (raw) => {
+      expect(() =>
+        parseConfig({ ...validEnv, TINYFISH_UPSTREAM_TIMEOUT_MS: raw })
+      ).toThrowError(ConfigError);
+      expect(() =>
+        parseConfig({ ...validEnv, TINYFISH_UPSTREAM_TIMEOUT_MS: raw })
+      ).toThrowError(/must be a non-negative integer/);
     });
   });
 });

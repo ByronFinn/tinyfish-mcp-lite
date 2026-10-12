@@ -24,6 +24,7 @@ against paid tools upstream has not shipped yet.
 | ------------------------------------------------------------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `tools/list` result                                                                        | all advertised tools | exactly `search`, `fetch_content` (schemas verbatim from upstream)                                                                        |
 | `tools/call` of a hidden tool                                                              | forwarded upstream   | answered locally: HTTP 400, JSON-RPC `-32602` `Unknown tool: <name>` — the request never leaves the process, so a paid call cannot happen |
+| Upstream request that goes silent                                                          | waits forever        | fails fast as JSON-RPC `-32000` after `TINYFISH_UPSTREAM_TIMEOUT_MS` (default 30000) of no bytes — the header wait and the JSON-body gap are both bounded; SSE (paid tools) is untouched |
 | Everything else (initialize, ping, notifications, resources, allowed calls, SSE streaming) | —                    | byte-identical passthrough                                                                                                                |
 
 ### Configuration: `TINYFISH_TOOLS`
@@ -37,6 +38,20 @@ TINYFISH_TOOLS=search,fetch_content,get_wallet   # any explicit allowlist
 Invalid values (empty list, malformed names) fail startup with an actionable
 message, same as `TINYFISH_API_KEY`/`PORT` handling.
 
+### Configuration: `TINYFISH_UPSTREAM_TIMEOUT_MS`
+
+```sh
+TINYFISH_UPSTREAM_TIMEOUT_MS=30000   # default — idle watchdog, in ms
+TINYFISH_UPSTREAM_TIMEOUT_MS=0       # disable; wait indefinitely (pre-0.2.2 behavior)
+```
+
+An idle (not total) deadline: every byte received from upstream re-arms it, so
+a slow-but-alive `fetch_content` survives while a blackholed upstream is
+bounded. `0` or a negative value disables it; invalid values fail startup.
+Only the two FREE tools' JSON path is bounded — SSE (`run_web_automation`,
+hidden by the allowlist) is passed through untouched. See
+`src/core/upstream-deadline.ts`.
+
 ## Divergence inventory (what makes this a fork)
 
 All fork logic lives in **fork-owned files**, marked so merges stay trivial:
@@ -45,13 +60,16 @@ All fork logic lives in **fork-owned files**, marked so merges stay trivial:
 | --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/core/tool-filter.ts`               | fork-only                | policy parsing (`parseToolPolicy`) + `ProxyCore` decorator (`withToolFilter`)                                                         |
 | `src/stdio/adapter.ts`                  | fork-only                | stdio transport (`--stdio`): newline-delimited JSON-RPC over stdin/stdout, same core, same filter — spawn-and-forget clients          |
+| `src/core/upstream-deadline.ts`         | fork-only                | upstream idle watchdog (`withUpstreamDeadline`): bounds a silent upstream so a request fails fast as `-32000` instead of hanging forever; SSE (paid tools) untouched |
 | `tests/tool-filter.test.ts`             | fork-only                | unit + full-flow tests (mock upstream)                                                                                                |
 | `tests/tool-filter.integration.test.ts` | fork-only                | real-upstream integration tests                                                                                                       |
 | `tests/stdio.test.ts`                   | fork-only                | stdio transport tests: in-process routing matrix + one spawn-the-entrypoint e2e                                                       |
+| `tests/upstream-deadline.test.ts`       | fork-only                | upstream idle watchdog tests (local node:http upstream; no network)                                                                   |
 | `.github/workflows/sync-upstream.yml`   | fork-only                | weekly upstream sync PR (see below)                                                                                                   |
 | `FORK.md`                               | fork-only                | this file                                                                                                                             |
-| `src/index.ts`                          | **edited upstream file** | 5 small hunks, each tagged `FORK(lite)` — import, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, the `--stdio` branch, startup log lines |
-| `README.md`                             | **edited upstream file** | fork banner at the top + a "Using this fork" section (differences, install with the recommended stdio client configs, HTTP as the shared alternative), a `TINYFISH_TOOLS` env row + a stdio note on the `PORT` row, small fork notes elsewhere (Client configuration preamble, stdio troubleshooting, trust model) |
+| `src/index.ts`                          | **edited upstream file** | small hunks, each tagged `FORK(lite)` — imports, `parseToolPolicy` in the config try-block, `withToolFilter` wrap, the `withUpstreamDeadline` fetchFn seam, the `--stdio` branch, startup log lines |
+| `README.md`                             | **edited upstream file** | fork banner at the top + a "Using this fork" section (differences, install with the recommended stdio client configs, HTTP as the shared alternative), `TINYFISH_TOOLS`/`TINYFISH_UPSTREAM_TIMEOUT_MS` env rows + a stdio note on the `PORT` row, a hung-upstream troubleshooting entry, small fork notes elsewhere (Client configuration preamble, trust model) |
+| `src/config.ts`                         | **edited upstream file** | `TINYFISH_UPSTREAM_TIMEOUT_MS` parse + `Config.upstreamTimeoutMs` (tagged `FORK(lite)`) |
 | `package.json`                          | **edited upstream file** | renamed to `tinyfish-mcp-lite` (published on npm; repository/homepage/bugs/mcpName point at the fork), `"prepare": "npm run build"` + an `allowScripts` object for npm ≥ 11.17 script-policy installs, bin target without the `./` prefix (npm ≥ 11.17 publish normalization drops `bin` otherwise) |
 | `.github/workflows/ci.yml`              | **edited upstream file** | integration leg scoped to the fork's free-tool suite (`FORK(lite)` note on the step) — upstream's suite runs a real paid automation |
 
